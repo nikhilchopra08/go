@@ -9,10 +9,11 @@ func main() {
 	// Initialize the database
 	initDB()
 
-	// Define the HTTP routes
-	http.HandleFunc("/signup", SignupHandler)
+	// Set up HTTP routes
+	http.HandleFunc("/signup", SignupHandler)  // Route for user signup
+	http.HandleFunc("/login", LoginHandler)    // Route for user login
 
-	// Start the server
+	// Start the server on port 8080
 	log.Println("Server is running on port 8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

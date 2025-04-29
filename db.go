@@ -2,10 +2,11 @@ package main
 
 import (
 	"database/sql"
-	"log"
 	"fmt"
+	"log"
+
 	_ "github.com/mattn/go-sqlite3"
-	"go-api/models" // Import your models package for the User struct and methods
+	"go-api/models"
 )
 
 var db *sql.DB
@@ -13,7 +14,7 @@ var db *sql.DB
 // Initialize the database and create the users table if not already present
 func initDB() {
 	var err error
-	db, err = sql.Open("sqlite3", "./names.db")
+	db, err = sql.Open("sqlite3", "./users.db")
 	if err != nil {
 		log.Fatal("Error opening database:", err)
 	}
@@ -62,20 +63,6 @@ func GetUserByEmail(email string) (*models.User, error) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No user found with that email
-		}
-		log.Println("Error querying user:", err)
-		return nil, err
-	}
-	return &user, nil
-}
-
-// GetUserByID retrieves a user by their unique ID
-func GetUserByID(id int) (*models.User, error) {
-	var user models.User
-	err := db.QueryRow("SELECT id, name, email, password FROM users WHERE id = ?", id).Scan(&user.ID, &user.Name, &user.Email, &user.Password)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil // No user found with that ID
 		}
 		log.Println("Error querying user:", err)
 		return nil, err

@@ -14,7 +14,6 @@ type User struct {
 
 // HashPassword hashes the user's password
 func (user *User) HashPassword() error {
-	// Hashing the password with bcrypt
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
