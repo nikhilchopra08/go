@@ -5,104 +5,192 @@ import (
 	"encoding/json"
 	"go-api/models"
 	"net/http"
-	"log"
+	"strings"
 )
 
-// SignupHandler handles user signup
+// SignupHandler creates a new user
 func SignupHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		var signupData struct {
-			Name     string `json:"name"`
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-
-		// Decode the signup data from the request body
-		err := json.NewDecoder(r.Body).Decode(&signupData)
-		if err != nil {
-			http.Error(w, "Invalid input", http.StatusBadRequest)
-			return
-		}
-
-		// Create a new user
-		user := &models.User{
-			Name:     signupData.Name,
-			Email:    signupData.Email,
-			Password: signupData.Password,
-		}
-
-		// Hash the password before storing
-		err = user.HashPassword()
-		if err != nil {
-			http.Error(w, "Error hashing password", http.StatusInternalServerError)
-			return
-		}
-
-		// Add the user to the database
-		err = AddUser(user)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Respond with a success message
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
-			"message": "User created successfully",
-		})
-	} else {
-		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+	var user models.User
+	err := json.NewDecoder(r.Body).Decode(&user)
+	if err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
 	}
+
+	// Check if email is already taken
+	var existingUser models.User
+	err = db.QueryRow("SELECT id, name, email FROM users WHERE email = ?", user.Email).Scan(&existingUser.ID, &existingUser.Name, &existingUser.Email)
+	if err != sql.ErrNoRows {
+		http.Error(w, "Email already in use", http.StatusBadRequest)
+		return
+	}
+
+	// Insert the new user into the database
+	_, err = db.Exec("INSERT INTO users (name, email, password) VALUES (?, ?, ?)", user.Name, user.Email, user.Password)
+	if err != nil {
+		http.Error(w, "Error creating user", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
 }
 
-// LoginHandler handles user login and JWT token generation
+// LoginHandler authenticates a user and generates a JWT
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		var loginData struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-
-		// Decode the login credentials from the request body
-		err := json.NewDecoder(r.Body).Decode(&loginData)
-		if err != nil {
-			http.Error(w, "Invalid input", http.StatusBadRequest)
-			return
-		}
-
-		// Retrieve the user from the database
-		var user models.User
-		err = db.QueryRow("SELECT id, name, email, password FROM users WHERE email = ?", loginData.Email).Scan(&user.ID, &user.Name, &user.Email, &user.Password)
-		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusUnauthorized)
-			return
-		} else if err != nil {
-			log.Println("Error querying user:", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Check if the password is correct
-		if !user.CheckPassword(loginData.Password) {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-			return
-		}
-
-		// Generate JWT token
-		token, err := GenerateJWT(&user)
-		if err != nil {
-			http.Error(w, "Error generating token", http.StatusInternalServerError)
-			return
-		}
-
-		// Respond with the JWT token
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
-			"token": token,
-		})
-	} else {
-		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+	var loginData struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
+	err := json.NewDecoder(r.Body).Decode(&loginData)
+	if err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+
+	// Check if the user exists
+	var user models.User
+	err = db.QueryRow("SELECT id, name, email, password FROM users WHERE email = ?", loginData.Email).Scan(&user.ID, &user.Name, &user.Email, &user.Password)
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Validate the password
+	if user.Password != loginData.Password {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate a JWT
+	token, err := GenerateJWT(&user)
+	if err != nil {
+		http.Error(w, "Error generating token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
+}
+
+// GetAllUsersHandler retrieves all registered users
+func GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
+	// Query the database for all users
+	rows, err := db.Query("SELECT id, name, email FROM users")
+	if err != nil {
+		http.Error(w, "Error querying database", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var user models.User
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email); err != nil {
+			http.Error(w, "Error scanning user", http.StatusInternalServerError)
+			return
+		}
+		users = append(users, user)
+	}
+
+	// If no users found, return empty list
+	if len(users) == 0 {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]models.User{})
+		return
+	}
+
+	// Return the list of users as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users)
+}
+
+func CreateProductHandler(w http.ResponseWriter, r *http.Request) {
+	var product models.Product
+
+	err := json.NewDecoder(r.Body).Decode(&product)
+	if err != nil {
+		http.Error(w, "Invalid product data", http.StatusBadRequest)
+		return
+	}
+
+	// Convert tags array to comma-separated string
+	tagsStr := strings.Join(product.Tags, ",")
+
+	// Insert into DB
+	_, err = db.Exec(`
+		INSERT INTO products 
+		(id, name, description, image, price, discounted_price, rating, tags, is_new, is_bestseller)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		product.ID, product.Name, product.Description, product.Image,
+		product.Price, product.DiscountedPrice, product.Rating, tagsStr,
+		boolToInt(product.IsNew), boolToInt(product.IsBestseller),
+	)
+
+	if err != nil {
+		http.Error(w, "Error saving product", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Product created successfully"})
+}
+
+
+func GetAllProductsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		SELECT id, name, description, image, price, discounted_price, rating, tags, is_new, is_bestseller
+		FROM products`)
+	if err != nil {
+		http.Error(w, "Error querying database", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var products []models.Product
+	for rows.Next() {
+		var product models.Product
+		var tagsStr string
+		var isNew, isBestseller int
+
+		if err := rows.Scan(
+			&product.ID,
+			&product.Name,
+			&product.Description,
+			&product.Image,
+			&product.Price,
+			&product.DiscountedPrice,
+			&product.Rating,
+			&tagsStr,
+			&isNew,
+			&isBestseller,
+		); err != nil {
+			http.Error(w, "Error scanning product", http.StatusInternalServerError)
+			return
+		}
+
+		// Parse JSON string of tags into a slice
+		if err := json.Unmarshal([]byte(tagsStr), &product.Tags); err != nil {
+			product.Tags = []string{}
+		}
+
+		product.IsNew = isNew == 1
+		product.IsBestseller = isBestseller == 1
+
+		products = append(products, product)
+	}
+
+	// Respond with an empty list if no products found
+	if len(products) == 0 {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode([]models.Product{})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(products)
 }
